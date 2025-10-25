@@ -1,4 +1,4 @@
-// server.js - Node.js Backend with Express, MongoDB, and JWT
+// server.js - Node.js Backend with Express, MongoDB, JWT, and Code Execution
 
 const express = require('express');
 const bodyParser = require('body-parser');
@@ -6,6 +6,7 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
+const axios = require('axios');
 require('dotenv').config();
 
 const app = express();
@@ -80,78 +81,152 @@ const authenticateToken = (req, res, next) => {
     }
 };
 
-// ==================== ROUTES ====================
+// Language mapping for Piston API
+const languageMapping = {
+    'python': 'python',
+    'javascript': 'javascript',
+    'java': 'java',
+    'cpp': 'c++',
+    'c++': 'c++',
+    'c': 'c',
+    'go': 'go',
+    'rust': 'rust',
+    'ruby': 'ruby',
+    'php': 'php',
+    'swift': 'swift',
+    'kotlin': 'kotlin',
+    'typescript': 'typescript'
+};
+
+// ==================== CODE EXECUTION ROUTES ====================
+
+// Execute Code using Piston API
+app.post('/api/execute', async (req, res) => {
+    try {
+        const { language, code, inputs = '' } = req.body;
+
+        if (!language || !code) {
+            return res.status(400).json({ error: 'Language and code are required!' });
+        }
+
+        // Map language to Piston format
+        const pistonLanguage = languageMapping[language.toLowerCase()] || language.toLowerCase();
+
+        const payload = {
+            language: pistonLanguage,
+            version: '*', // Use latest version
+            files: [
+                {
+                    name: 'main',
+                    content: code
+                }
+            ],
+            stdin: inputs
+        };
+
+        const response = await axios.post('https://emkc.org/api/v2/piston/execute', payload);
+        const result = response.data;
+
+        res.json({
+            language: language,
+            stdout: result.run?.stdout || '',
+            stderr: result.run?.stderr || '',
+            output: result.run?.output || '',
+            exitCode: result.run?.code || 0,
+            success: result.run?.code === 0 && !result.run?.stderr
+        });
+
+    } catch (error) {
+        console.error('Code Execution Error:', error);
+        res.status(500).json({ 
+            error: 'Code execution failed', 
+            details: error.message 
+        });
+    }
+});
+
+// Get supported languages
+app.get('/api/languages', async (req, res) => {
+    try {
+        const response = await axios.get('https://emkc.org/api/v2/piston/runtimes');
+        const languages = response.data.map(lang => ({
+            language: lang.language,
+            version: lang.version,
+            aliases: lang.aliases
+        }));
+        res.json(languages);
+    } catch (error) {
+        console.error('Error fetching languages:', error);
+        res.status(500).json({ error: 'Failed to fetch supported languages' });
+    }
+});
+
+// ==================== AI CODE GENERATION ROUTE ====================
 
 app.post('/api/generate-code', async (req, res) => {
-  const { prompt, language = 'python' } = req.body;
-  if (!prompt) return res.status(400).json({ error: 'prompt required' });
+    const { prompt, language = 'python' } = req.body;
+    if (!prompt) return res.status(400).json({ error: 'prompt required' });
 
-  const API_KEY = process.env.GEMINI_API_KEY;
-  const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+    const API_KEY = process.env.GEMINI_API_KEY;
+    const MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash-exp';
 
-  if (!API_KEY) {
-    console.error('GEMINI_API_KEY missing in environment');
-    return res.status(500).json({ error: 'Server not configured: GEMINI_API_KEY missing' });
-  }
+    if (!API_KEY) {
+        console.error('GEMINI_API_KEY missing in environment');
+        return res.status(500).json({ error: 'Server not configured: GEMINI_API_KEY missing' });
+    }
 
-  try {
-    const systemInstruction = `You are a code generation assistant. Produce valid ${language} code only. Do not include explanations, metadata, or surrounding text. If you must include comments, keep them minimal.`;
-    const userInstruction = `User request: ${prompt}`;
+    try {
+        const systemInstruction = `You are a code generation assistant. Produce valid ${language} code only. Do not include explanations, metadata, or surrounding text. If you must include comments, keep them minimal.`;
+        const userInstruction = `User request: ${prompt}`;
 
-    const requestBody = {
-      contents: [
-        {
-          parts: [
-            {
-              text: `${systemInstruction}\n\n${userInstruction}`
+        const requestBody = {
+            contents: [
+                {
+                    parts: [
+                        {
+                            text: `${systemInstruction}\n\n${userInstruction}`
+                        }
+                    ]
+                }
+            ],
+            generationConfig: {
+                temperature: 0.2,
+                maxOutputTokens: 1024,
+                candidateCount: 1
             }
-          ]
+        };
+
+        const url = `https://generativelanguage.googleapis.com/v1/models/${MODEL}:generateContent?key=${API_KEY}`;
+
+        const fetchRes = await axios.post(url, requestBody, {
+            headers: { 'Content-Type': 'application/json' }
+        });
+
+        const json = fetchRes.data;
+        let generated = '';
+        if (json.candidates && json.candidates.length && json.candidates[0].content && json.candidates[0].content.parts) {
+            generated = json.candidates[0].content.parts[0].text || '';
+        } else {
+            console.error('Unexpected API response:', json);
+            return res.status(502).json({ error: 'Unexpected API response', details: JSON.stringify(json) });
         }
-      ],
-      generationConfig: {
-        temperature: 0.2,
-        maxOutputTokens: 1024,
-        candidateCount: 1
-      }
-    };
 
-    const url = `https://generativelanguage.googleapis.com/v1/models/${MODEL}:generateContent?key=${API_KEY}`;
+        // Extract code from Markdown if present
+        const fenceMatch = generated.match(/```(?:\w*\n)?([\s\S]*?)```/);
+        if (fenceMatch && fenceMatch[1]) {
+            generated = fenceMatch[1].trim();
+        } else {
+            generated = generated.trim();
+        }
 
-    const fetchRes = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody)
-    });
-
-    if (!fetchRes.ok) {
-      const text = await fetchRes.text();
-      console.error('Gemini API error:', fetchRes.status, fetchRes.statusText, text);
-      return res.status(502).json({ error: 'Generation API error', details: text });
+        res.json({ code: generated });
+    } catch (err) {
+        console.error('Generation error:', err);
+        res.status(500).json({ error: 'generation failed', details: err.message });
     }
-
-    const json = await fetchRes.json();
-    let generated = '';
-    if (json.candidates && json.candidates.length && json.candidates[0].content && json.candidates[0].content.parts) {
-      generated = json.candidates[0].content.parts[0].text || '';
-    } else {
-      console.error('Unexpected API response:', json);
-      return res.status(502).json({ error: 'Unexpected API response', details: JSON.stringify(json) });
-    }
-
-    // Extract code from Markdown if present
-    const fenceMatch = generated.match(/```(?:\w*\n)?([\s\S]*?)```/);
-    if (fenceMatch && fenceMatch[1]) {
-      generated = fenceMatch[1].trim();
-    } else {
-      generated = generated.trim();
-    }
-
-    res.json({ code: generated });
-  } catch (err) {
-    console.error('Generation error:', err);
-    res.status(500).json({ error: 'generation failed', details: err.message });
-  }
 });
+
+// ==================== AUTH ROUTES ====================
 
 // Signup Route
 app.post('/api/signup', async (req, res) => {

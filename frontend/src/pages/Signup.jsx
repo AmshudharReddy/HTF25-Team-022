@@ -1,13 +1,15 @@
-// Login.jsx
+// Signup.jsx
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import '../styles/auth.css';
 
-const Login = () => {
+const Signup = () => {
   const navigate = useNavigate();
   const [formData, setFormData] = useState({
+    name: '',
     email: '',
-    password: ''
+    password: '',
+    confirmPassword: ''
   });
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -24,23 +26,39 @@ const Login = () => {
     setMessage({ type: '', text: '' });
 
     // Validation
-    if (!formData.email || !formData.password) {
+    if (!formData.name || !formData.email || !formData.password || !formData.confirmPassword) {
       setMessage({ type: 'error', text: 'Please fill in all fields!' });
       setLoading(false);
       return;
     }
 
+    if (formData.password !== formData.confirmPassword) {
+      setMessage({ type: 'error', text: 'Passwords do not match!' });
+      setLoading(false);
+      return;
+    }
+
+    if (formData.password.length < 6) {
+      setMessage({ type: 'error', text: 'Password must be at least 6 characters!' });
+      setLoading(false);
+      return;
+    }
+
     try {
-      const response = await fetch('http://localhost:5000/api/login', {
+      const response = await fetch('http://localhost:5000/api/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
+        body: JSON.stringify({
+          name: formData.name,
+          email: formData.email,
+          password: formData.password
+        })
       });
 
       const data = await response.json();
 
       if (response.ok) {
-        setMessage({ type: 'success', text: data.message || 'Login successful!' });
+        setMessage({ type: 'success', text: data.message || 'Account created successfully!' });
         
         // Store token and user data
         localStorage.setItem('authToken', data.token);
@@ -52,11 +70,11 @@ const Login = () => {
           navigate('/dashboard');
         }, 1500);
       } else {
-        setMessage({ type: 'error', text: data.error || 'Login failed!' });
+        setMessage({ type: 'error', text: data.error || 'Signup failed!' });
       }
     } catch (error) {
       setMessage({ type: 'error', text: 'Network error. Please try again.' });
-      console.error('Login error:', error);
+      console.error('Signup error:', error);
     } finally {
       setLoading(false);
     }
@@ -117,12 +135,12 @@ const Login = () => {
           </div>
         </div>
 
-        {/* Login Form */}
+        {/* Signup Form */}
         <div className="form-section">
           <div className="form-card">
             <div className="form-header">
-              <h3 className="form-title">Welcome Back</h3>
-              <p className="form-subtitle">Sign in to continue coding</p>
+              <h3 className="form-title">Get Started</h3>
+              <p className="form-subtitle">Create your account</p>
             </div>
 
             {message.text && (
@@ -132,6 +150,25 @@ const Login = () => {
             )}
 
             <form onSubmit={handleSubmit}>
+              {/* Name Field */}
+              <div className="form-group">
+                <label className="form-label">Full Name</label>
+                <div className="input-wrapper">
+                  <svg className="input-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
+                  </svg>
+                  <input
+                    type="text"
+                    name="name"
+                    value={formData.name}
+                    onChange={handleInputChange}
+                    placeholder="John Doe"
+                    className="form-input"
+                    required
+                  />
+                </div>
+              </div>
+
               {/* Email Field */}
               <div className="form-group">
                 <label className="form-label">Email Address</label>
@@ -186,15 +223,23 @@ const Login = () => {
                 </div>
               </div>
 
-              {/* Remember Me & Forgot Password */}
-              <div className="form-options">
-                <label className="remember-me">
-                  <input type="checkbox" />
-                  Remember me
-                </label>
-                <Link to="/forgot-password" className="forgot-password">
-                  Forgot password?
-                </Link>
+              {/* Confirm Password Field */}
+              <div className="form-group">
+                <label className="form-label">Confirm Password</label>
+                <div className="input-wrapper">
+                  <svg className="input-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
+                  </svg>
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    name="confirmPassword"
+                    value={formData.confirmPassword}
+                    onChange={handleInputChange}
+                    placeholder="••••••••"
+                    className="form-input"
+                    required
+                  />
+                </div>
               </div>
 
               {/* Submit Button */}
@@ -203,15 +248,15 @@ const Login = () => {
                 disabled={loading}
                 className="submit-btn"
               >
-                {loading ? 'Signing In...' : 'Sign In'}
+                {loading ? 'Creating Account...' : 'Create Account'}
               </button>
             </form>
 
-            {/* Toggle to Signup */}
+            {/* Toggle to Login */}
             <div className="toggle-auth">
-              Don't have an account?{' '}
-              <Link to="/signup" className="toggle-btn">
-                Sign Up
+              Already have an account?{' '}
+              <Link to="/login" className="toggle-btn">
+                Sign In
               </Link>
             </div>
           </div>
@@ -221,4 +266,4 @@ const Login = () => {
   );
 };
 
-export default Login;
+export default Signup;
