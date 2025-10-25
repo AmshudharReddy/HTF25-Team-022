@@ -1,6 +1,7 @@
 // server.js - Node.js Backend with Express, MongoDB, and JWT
 
 const express = require('express');
+const bodyParser = require('body-parser');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -10,6 +11,7 @@ require('dotenv').config();
 const app = express();
 
 // Middleware
+app.use(bodyParser.json());
 app.use(express.json());
 app.use(cors());
 
@@ -79,6 +81,77 @@ const authenticateToken = (req, res, next) => {
 };
 
 // ==================== ROUTES ====================
+
+app.post('/api/generate-code', async (req, res) => {
+  const { prompt, language = 'python' } = req.body;
+  if (!prompt) return res.status(400).json({ error: 'prompt required' });
+
+  const API_KEY = process.env.GEMINI_API_KEY;
+  const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+
+  if (!API_KEY) {
+    console.error('GEMINI_API_KEY missing in environment');
+    return res.status(500).json({ error: 'Server not configured: GEMINI_API_KEY missing' });
+  }
+
+  try {
+    const systemInstruction = `You are a code generation assistant. Produce valid ${language} code only. Do not include explanations, metadata, or surrounding text. If you must include comments, keep them minimal.`;
+    const userInstruction = `User request: ${prompt}`;
+
+    const requestBody = {
+      contents: [
+        {
+          parts: [
+            {
+              text: `${systemInstruction}\n\n${userInstruction}`
+            }
+          ]
+        }
+      ],
+      generationConfig: {
+        temperature: 0.2,
+        maxOutputTokens: 1024,
+        candidateCount: 1
+      }
+    };
+
+    const url = `https://generativelanguage.googleapis.com/v1/models/${MODEL}:generateContent?key=${API_KEY}`;
+
+    const fetchRes = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody)
+    });
+
+    if (!fetchRes.ok) {
+      const text = await fetchRes.text();
+      console.error('Gemini API error:', fetchRes.status, fetchRes.statusText, text);
+      return res.status(502).json({ error: 'Generation API error', details: text });
+    }
+
+    const json = await fetchRes.json();
+    let generated = '';
+    if (json.candidates && json.candidates.length && json.candidates[0].content && json.candidates[0].content.parts) {
+      generated = json.candidates[0].content.parts[0].text || '';
+    } else {
+      console.error('Unexpected API response:', json);
+      return res.status(502).json({ error: 'Unexpected API response', details: JSON.stringify(json) });
+    }
+
+    // Extract code from Markdown if present
+    const fenceMatch = generated.match(/```(?:\w*\n)?([\s\S]*?)```/);
+    if (fenceMatch && fenceMatch[1]) {
+      generated = fenceMatch[1].trim();
+    } else {
+      generated = generated.trim();
+    }
+
+    res.json({ code: generated });
+  } catch (err) {
+    console.error('Generation error:', err);
+    res.status(500).json({ error: 'generation failed', details: err.message });
+  }
+});
 
 // Signup Route
 app.post('/api/signup', async (req, res) => {
