@@ -7,7 +7,8 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
 const axios = require('axios');
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '../.env') }); 
 
 const app = express();
 
@@ -55,7 +56,7 @@ const userSchema = new mongoose.Schema({
 const User = mongoose.model('User', userSchema);
 
 // JWT Secret
-const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-key-change-this-in-production';
+const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_EXPIRE = '7d';
 
 // Generate JWT Token
@@ -101,13 +102,29 @@ const languageMapping = {
 // ==================== CODE EXECUTION ROUTES ====================
 
 // Execute Code using Piston API
+// Updated Execute Code API Endpoint - Add this to your server.js
+
+// Execute Code using Piston API (IMPROVED VERSION)
+// Updated Execute Code API Endpoint - OPTIMIZED VERSION
+
+// Execute Code using Piston API (OPTIMIZED)
 app.post('/api/execute', async (req, res) => {
     try {
         const { language, code, inputs = '' } = req.body;
 
+        // Validation
         if (!language || !code) {
             return res.status(400).json({ error: 'Language and code are required!' });
         }
+
+        // Log request for debugging
+        const startTime = Date.now();
+        console.log('Execute request:', { 
+            language, 
+            codeLength: code.length, 
+            hasInputs: !!inputs,
+            inputsLength: inputs.length 
+        });
 
         // Map language to Piston format
         const pistonLanguage = languageMapping[language.toLowerCase()] || language.toLowerCase();
@@ -121,27 +138,73 @@ app.post('/api/execute', async (req, res) => {
                     content: code
                 }
             ],
-            stdin: inputs
+            stdin: inputs,  // User input passed here
+            compile_timeout: 10000,  // 10 seconds
+            run_timeout: 3000,       // 3 seconds - reduced from default
+            compile_memory_limit: -1,
+            run_memory_limit: -1
         };
 
-        const response = await axios.post('https://emkc.org/api/v2/piston/execute', payload);
+        // Call Piston API with timeout
+        const response = await axios.post('https://emkc.org/api/v2/piston/execute', payload, {
+            timeout: 10000  // 10 second timeout
+        });
         const result = response.data;
 
-        res.json({
+        const executionTime = Date.now() - startTime;
+        console.log('Execution time:', executionTime + 'ms');
+
+        // Log Piston response for debugging
+        console.log('Piston response:', {
+            stdout: result.run?.stdout?.substring(0, 100) || '',
+            stderr: result.run?.stderr?.substring(0, 100) || '',
+            code: result.run?.code
+        });
+
+        // Better success detection
+        const hasStdout = result.run?.stdout && result.run.stdout.length > 0;
+        const hasOutput = result.run?.output && result.run.output.length > 0;
+        const hasStderr = result.run?.stderr && result.run.stderr.length > 0;
+        const exitCode = result.run?.code || 0;
+        
+        // Consider it successful if:
+        // 1. Exit code is 0, OR
+        // 2. There's stdout/output (even with warnings in stderr)
+        const isSuccess = exitCode === 0 || (hasStdout || hasOutput);
+
+        const responseData = {
             language: language,
             stdout: result.run?.stdout || '',
             stderr: result.run?.stderr || '',
             output: result.run?.output || '',
-            exitCode: result.run?.code || 0,
-            success: result.run?.code === 0 && !result.run?.stderr
+            exitCode: exitCode,
+            success: isSuccess,
+            executionTime: executionTime  // Add execution time
+        };
+
+        console.log('Sending response:', {
+            success: responseData.success,
+            exitCode: responseData.exitCode,
+            hasOutput: !!(responseData.stdout || responseData.output),
+            time: executionTime + 'ms'
         });
 
+        res.json(responseData);
+
     } catch (error) {
-        console.error('Code Execution Error:', error);
-        res.status(500).json({ 
-            error: 'Code execution failed', 
-            details: error.message 
-        });
+        if (error.code === 'ECONNABORTED') {
+            console.error('Request timeout');
+            res.status(504).json({
+                error: 'Code execution timeout',
+                details: 'The code took too long to execute (>10 seconds)'
+            });
+        } else {
+            console.error('Code Execution Error:', error);
+            res.status(500).json({
+                error: 'Code execution failed',
+                details: error.message
+            });
+        }
     }
 });
 

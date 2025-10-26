@@ -21,16 +21,15 @@ const Dashboard = () => {
   const inputRef = useRef(null);
   const recognitionRef = useRef(null);
   const languageRef = useRef('python');
-  const codeRef = useRef(code);  // NEW: Ref to track latest code state
+  const codeRef = useRef(code);
 
   const initialCodeSnippets = {
     python: '# Start coding with your voice!\nname = input("Enter your name: ")\nprint(f"Hello, {name}!")',
     javascript: '// Start coding with your voice!\nconsole.log("Hello World!");',
-    java: 'import java.util.Scanner;\npublic class Main {\n    public static void main(String[] args) {\n        System.out.println("Hello World!");\n    }\n}',
-    cpp: '#include <iostream>\nusing namespace std;\n\nint main() {\n    cout << "Hello World!" << endl;\n    return 0;\n}'
+    java: 'import java.util.Scanner;\npublic class Main {\n    public static void main(String[] args) {\n        Scanner scanner = new Scanner(System.in);\n        System.out.print("Enter your name: ");\n        String name = scanner.nextLine();\n        System.out.println("Hello, " + name + "!");\n        scanner.close();\n    }\n}',
+    cpp: '#include <iostream>\n#include <string>\nusing namespace std;\n\nint main() {\n    string name;\n    cout << "Enter your name: ";\n    getline(cin, name);\n    cout << "Hello, " << name << "!" << endl;\n    return 0;\n}'
   };
 
-  // NEW: Update codeRef whenever code state changes
   useEffect(() => {
     codeRef.current = code;
   }, [code]);
@@ -80,11 +79,9 @@ const Dashboard = () => {
         if (finalTranscript) {
           const lowerTranscript = finalTranscript.toLowerCase().trim();
           const currentLang = languageRef.current;
-          const currentCode = codeRef.current;  // Use ref for latest code
+          const currentCode = codeRef.current;
 
-          // UPDATED: Broader keyword detection for debugging
           if (lowerTranscript.includes('debug') || lowerTranscript.includes('fix') || lowerTranscript.includes('error')) {
-            // Extract error description: everything after the keyword
             let errorDesc = finalTranscript;
             if (lowerTranscript.includes('debug')) {
               errorDesc = finalTranscript.replace(/debug/i, '').trim();
@@ -94,12 +91,10 @@ const Dashboard = () => {
               errorDesc = finalTranscript.replace(/error/i, '').trim();
             }
             errorDesc = errorDesc || 'Fix any errors in the code';
-            console.log('Debug triggered with code:', currentCode, 'desc:', errorDesc);  // Log for debugging
-            debugCode(errorDesc, currentLang, currentCode);  // Pass currentCode explicitly
-            return; // Exit early, don't fall through to generation
+            debugCode(errorDesc, currentLang, currentCode);
+            return;
           }
 
-          // Existing generation/command logic
           generateCode(finalTranscript.trim(), currentLang).catch(err => {
             processVoiceCommand(finalTranscript.trim(), currentLang);
           });
@@ -123,7 +118,6 @@ const Dashboard = () => {
     };
   }, []);
 
-  // UPDATED: Debugging function - pass currentCode explicitly, improved logging
   const debugCode = async (errorDescription, currentLanguage, currentCode) => {
     if (!currentCode || !errorDescription) {
       addToTerminal('Error: No code or description provided for debugging.', 'error');
@@ -134,30 +128,24 @@ const Dashboard = () => {
       setIsProcessing(true);
       addToTerminal('🔍 Debugging code... (Error: ' + errorDescription + ')', 'system');
 
-      console.log('Debug request payload:', { code: currentCode, errorDescription, language: currentLanguage });
-
       const res = await fetch('http://localhost:5000/api/debug-code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code: currentCode, errorDescription, language: currentLanguage })
       });
 
-      console.log('Debug response status:', res.status);
-
       if (!res.ok) {
         const errorText = await res.text();
-        console.error('Debug server error:', res.status, errorText);
-        throw new Error(`Server error: ${res.status} - ${errorText}`);
+        throw new Error('Server error: ' + res.status + ' - ' + errorText);
       }
 
       const data = await res.json();
-      console.log('Debug response data:', data);
 
       if (data && data.fixedCode) {
         setCode(data.fixedCode);
         addToTerminal('✅ Debugging complete! Fixed code applied.', 'success');
         addToTerminal('─'.repeat(60), 'divider');
-        setCommandHistory(prev => [...prev, { command: `Debug: ${errorDescription}`, timestamp: new Date() }].slice(-5));
+        setCommandHistory(prev => [...prev, { command: 'Debug: ' + errorDescription, timestamp: new Date() }].slice(-5));
       } else {
         throw new Error('No fixed code returned from server');
       }
@@ -165,7 +153,6 @@ const Dashboard = () => {
       console.error('debugCode error:', err);
       addToTerminal('❌ Debugging failed: ' + err.message, 'error');
       addToTerminal('─'.repeat(60), 'divider');
-      // Fallback: Suggest running code to see error
       addToTerminal('💡 Tip: Run the code to see the exact error, then describe it (e.g., "fix the NameError").', 'system');
     } finally {
       setTimeout(() => setIsProcessing(false), 300);
@@ -298,6 +285,29 @@ const Dashboard = () => {
     addToTerminal('$ Running ' + language + ' code...', 'system');
     addToTerminal('─'.repeat(60), 'divider');
 
+    const requiresInput = code.includes('input(') || 
+                         code.includes('scanf') || 
+                         code.includes('Scanner') ||
+                         code.includes('cin >>') ||
+                         code.includes('getline');
+
+    if (requiresInput) {
+      if (language === 'python' && code.includes('input(')) {
+        const match = code.match(/input\(["'](.+?)["']\)/);
+        const prompt = match ? match[1] : 'Enter input:';
+        addToTerminal(prompt + ' ', 'prompt');
+      } else if (language === 'java' && code.includes('Scanner')) {
+        addToTerminal('Enter input: ', 'prompt');
+      } else if (language === 'cpp' && (code.includes('cin') || code.includes('getline'))) {
+        addToTerminal('Enter input: ', 'prompt');
+      } else {
+        addToTerminal('Enter input: ', 'prompt');
+      }
+      setAwaitingInput(true);
+      setIsExecuting(false);
+      return;
+    }
+
     try {
       const response = await fetch('http://localhost:5000/api/execute', {
         method: 'POST',
@@ -312,51 +322,27 @@ const Dashboard = () => {
       const result = await response.json();
 
       if (response.ok) {
-        const requiresInput = code.includes('input(') || 
-                             code.includes('scanf') || 
-                             code.includes('Scanner') ||
-                             code.includes('cin >>');
-        
-        if (requiresInput && !result.success) {
-          if (language === 'python' && code.includes('input(')) {
-            const match = code.match(/input\(["'](.+?)["']\)/);
-            const prompt = match ? match[1] : 'Enter input:';
-            addToTerminal(prompt + ' ', 'prompt');
-            setAwaitingInput(true);
-          } else if (language === 'java' && code.includes('Scanner')) {
-            addToTerminal('Enter your name: ', 'prompt');
-            setAwaitingInput(true);
-          } else if (language === 'cpp' && code.includes('cin')) {
-            addToTerminal('Enter input: ', 'prompt');
-            setAwaitingInput(true);
-          } else {
-            addToTerminal('Program is waiting for input: ', 'prompt');
-            setAwaitingInput(true);
-          }
+        if (result.success) {
+          const outputText = result.output || result.stdout || 'Program executed successfully with no output.';
+          addToTerminal(outputText, 'output');
+          addToTerminal('─'.repeat(60), 'divider');
+          addToTerminal('✓ Execution completed successfully (exit code: ' + result.exitCode + ')', 'success');
         } else {
-          if (result.success) {
-            const outputText = result.output || result.stdout || 'Program executed successfully with no output.';
-            addToTerminal(outputText, 'output');
-            addToTerminal('─'.repeat(60), 'divider');
-            addToTerminal('✓ Execution completed successfully (exit code: 0)', 'success');
-          } else {
-            const errorText = result.stderr || result.output || 'Execution failed';
-            addToTerminal(errorText, 'error');
-            addToTerminal('─'.repeat(60), 'divider');
-            addToTerminal('✗ Execution failed (exit code: 1)', 'error');
-          }
-          setIsExecuting(false);
+          const errorText = result.stderr || result.output || 'Execution failed';
+          addToTerminal(errorText, 'error');
+          addToTerminal('─'.repeat(60), 'divider');
+          addToTerminal('✗ Execution failed (exit code: ' + result.exitCode + ')', 'error');
         }
       } else {
         addToTerminal(result.error || 'Failed to execute code', 'error');
         addToTerminal('─'.repeat(60), 'divider');
         addToTerminal('✗ Execution failed', 'error');
-        setIsExecuting(false);
       }
     } catch (err) {
       addToTerminal('Network error: ' + err.message, 'error');
       addToTerminal('─'.repeat(60), 'divider');
       addToTerminal('✗ Execution failed', 'error');
+    } finally {
       setIsExecuting(false);
     }
   };
@@ -367,18 +353,24 @@ const Dashboard = () => {
       const input = currentInput.trim();
       
       addToTerminal(input, 'input');
+      
+      const newInputQueue = [...inputQueue, input];
+      setInputQueue(newInputQueue);
+      
       setCurrentInput('');
       setAwaitingInput(false);
       
-      setInputQueue(prev => [...prev, input]);
-      
-      await continueExecution(input);
+      await executeWithInputs(newInputQueue);
     }
   };
 
-  const continueExecution = async (userInput) => {
+  const executeWithInputs = async (allInputs) => {
     setIsExecuting(true);
     
+    const inputString = allInputs.join('\n');
+    
+    addToTerminal('⏳ Processing...', 'system');
+
     try {
       const response = await fetch('http://localhost:5000/api/execute', {
         method: 'POST',
@@ -386,34 +378,49 @@ const Dashboard = () => {
         body: JSON.stringify({
           language,
           code,
-          inputs: inputQueue.concat([userInput]).join('\n')
+          inputs: inputString
         })
       });
 
       const result = await response.json();
+      
+      setTerminalHistory(prev => prev.filter(entry => entry.content !== '⏳ Processing...'));
 
       if (response.ok) {
-        if (result.success) {
-          const outputText = result.output || result.stdout || 'Program executed successfully.';
-          addToTerminal(outputText, 'output');
-          addToTerminal('─'.repeat(60), 'divider');
-          addToTerminal('✓ Execution completed successfully (exit code: 0)', 'success');
+        const inputCount = (code.match(/input\(/g) || []).length + 
+                          (code.match(/Scanner.*nextLine/g) || []).length +
+                          (code.match(/cin\s*>>/g) || []).length +
+                          (code.match(/getline/g) || []).length;
+
+        if (allInputs.length < inputCount) {
+          addToTerminal('Enter next input: ', 'prompt');
+          setAwaitingInput(true);
+          setIsExecuting(false);
         } else {
-          const errorText = result.stderr || result.output || 'Execution failed';
-          addToTerminal(errorText, 'error');
-          addToTerminal('─'.repeat(60), 'divider');
-          addToTerminal('✗ Execution failed (exit code: 1)', 'error');
+          if (result.success) {
+            const outputText = result.output || result.stdout || 'Program executed successfully.';
+            addToTerminal(outputText, 'output');
+            addToTerminal('─'.repeat(60), 'divider');
+            addToTerminal('✓ Execution completed successfully (exit code: ' + result.exitCode + ')', 'success');
+          } else {
+            const errorText = result.stderr || result.output || 'Execution failed';
+            addToTerminal(errorText, 'error');
+            addToTerminal('─'.repeat(60), 'divider');
+            addToTerminal('✗ Execution failed (exit code: ' + result.exitCode + ')', 'error');
+          }
+          setIsExecuting(false);
         }
       } else {
         addToTerminal(result.error || 'Failed to execute code', 'error');
         addToTerminal('─'.repeat(60), 'divider');
         addToTerminal('✗ Execution failed', 'error');
+        setIsExecuting(false);
       }
     } catch (err) {
+      setTerminalHistory(prev => prev.filter(entry => entry.content !== '⏳ Processing...'));
       addToTerminal('Runtime Error: ' + err.message, 'error');
       addToTerminal('─'.repeat(60), 'divider');
-      addToTerminal('✗ Execution failed (exit code: 1)', 'error');
-    } finally {
+      addToTerminal('✗ Execution failed', 'error');
       setIsExecuting(false);
     }
   };
@@ -466,6 +473,8 @@ const Dashboard = () => {
   const handleLanguageChange = (newLanguage) => {
     setLanguage(newLanguage);
     setCode(initialCodeSnippets[newLanguage]);
+    setTerminalHistory([]);
+    setInputQueue([]);
     if (isRecording && recognitionRef.current) {
       recognitionRef.current.stop();
       setTimeout(() => {
@@ -473,9 +482,9 @@ const Dashboard = () => {
       }, 100);
     }
   };
+
   return (
     <div className="dashboard-container">
-      {/* Header */}
       <header className="dashboard-header">
         <div className="header-content">
           <div className="logo-section">
@@ -498,7 +507,6 @@ const Dashboard = () => {
       </header>
 
       <main className="dashboard-main">
-        {/* Voice Control Panel */}
         <div className="voice-control-panel">
           <div className="control-header">
             <h2 className="control-title">Voice Assistant</h2>
@@ -510,7 +518,6 @@ const Dashboard = () => {
             </div>
           </div>
 
-          {/* Recording Button */}
           <div className="recording-section">
             <button
               onClick={isRecording ? stopRecording : startRecording}
@@ -523,7 +530,6 @@ const Dashboard = () => {
             </button>
           </div>
 
-          {/* Transcript Display */}
           <div className="transcript-box">
             <div className="transcript-label">Live Transcript:</div>
             <div className="transcript-content">
@@ -531,7 +537,6 @@ const Dashboard = () => {
             </div>
           </div>
 
-          {/* Command History */}
           <div className="command-history">
             <h3 className="history-title">Recent Commands</h3>
             <div className="history-list">
@@ -551,46 +556,21 @@ const Dashboard = () => {
           </div>
         </div>
 
-        {/* Code Editor Section */}
         <div className="code-editor-section">
           <div className="editor-header">
             <div className="editor-tabs">
-              <button
-                className={'tab ' + (language === 'python' ? 'active' : '')}
-                onClick={() => handleLanguageChange('python')}
-              >
-                <svg className="tab-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path>
-                </svg>
-                Python
-              </button>
-              <button
-                className={'tab ' + (language === 'javascript' ? 'active' : '')}
-                onClick={() => handleLanguageChange('javascript')}
-              >
-                <svg className="tab-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path>
-                </svg>
-                JavaScript
-              </button>
-              <button
-                className={'tab ' + (language === 'java' ? 'active' : '')}
-                onClick={() => handleLanguageChange('java')}
-              >
-                <svg className="tab-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path>
-                </svg>
-                Java
-              </button>
-              <button
-                className={'tab ' + (language === 'cpp' ? 'active' : '')}
-                onClick={() => handleLanguageChange('cpp')}
-              >
-                <svg className="tab-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path>
-                </svg>
-                C++
-              </button>
+              {['python', 'javascript', 'java', 'cpp'].map((lang) => (
+                <button
+                  key={lang}
+                  className={'tab ' + (language === lang ? 'active' : '')}
+                  onClick={() => handleLanguageChange(lang)}
+                >
+                  <svg className="tab-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path>
+                  </svg>
+                  {lang === 'cpp' ? 'C++' : lang.charAt(0).toUpperCase() + lang.slice(1)}
+                </button>
+              ))}
             </div>
 
             <div className="editor-actions">
@@ -628,7 +608,6 @@ const Dashboard = () => {
               placeholder="Write your code here or use voice commands..."
             />
 
-            {/* Terminal Output Panel */}
             <div className="terminal-output-panel">
               <div className="terminal-header">
                 <h3 className="terminal-title">
@@ -659,7 +638,14 @@ const Dashboard = () => {
                     {terminalHistory.map((entry, index) => (
                       <div key={index} className={'terminal-line terminal-' + entry.type}>
                         {entry.type === 'prompt' && <span className="terminal-prompt-arrow">› </span>}
-                        {entry.content}
+                        {entry.type === 'system' && entry.content === '⏳ Processing...' ? (
+                          <span className="processing-indicator">
+                            <span className="spinner-small"></span>
+                            {entry.content}
+                          </span>
+                        ) : (
+                          entry.content
+                        )}
                       </div>
                     ))}
                     {awaitingInput && (
@@ -684,7 +670,6 @@ const Dashboard = () => {
             </div>
           </div>
 
-          {/* Voice Commands Help */}
           <div className="commands-help">
             <h4 className="help-title">Try these voice commands:</h4>
             <div className="commands-grid">
@@ -694,6 +679,7 @@ const Dashboard = () => {
               <span className="command-chip">"Add if statement"</span>
               <span className="command-chip">"Run code"</span>
               <span className="command-chip">"Clear terminal"</span>
+              <span className="command-chip">"Debug [error description]"</span>
             </div>
           </div>
         </div>
