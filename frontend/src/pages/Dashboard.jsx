@@ -33,13 +33,13 @@ const Dashboard = () => {
   const roomIdRef = useRef(null);
   const isRemoteUpdateRef = useRef(false); // ADDED: Flag to prevent echo
 
-  const initialCodeSnippets = {
+   const initialCodeSnippets = {
     python:
-      '# Start coding with your voice!\nname = input("Enter your name: ")\nprint(f"Hello, {name}!")',
+      '# Start coding with your voice!\n',
     javascript:
-      '// Start coding with your voice!\nconsole.log("Hello World!");',
-    java: 'import java.util.Scanner;\npublic class Main {\n    public static void main(String[] args) {\n        Scanner scanner = new Scanner(System.in);\n        System.out.print("Enter your name: ");\n        String name = scanner.nextLine();\n        System.out.println("Hello, " + name + "!");\n        scanner.close();\n    }\n}',
-    cpp: '#include <iostream>\n#include <string>\nusing namespace std;\n\nint main() {\n    string name;\n    cout << "Enter your name: ";\n    getline(cin, name);\n    cout << "Hello, " << name << "!" << endl;\n    return 0;\n}',
+      '// Start coding with your voice!\n',
+    java: '//start voice coding in java...',
+    cpp: '//Start voice coding in C++..\n',
   };
 
   useEffect(() => {
