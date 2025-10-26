@@ -1,5 +1,4 @@
-// server.js - Node.js Backend with Express, MongoDB, JWT, and Code Execution
-
+// server.js - Node.js Backend with Express, MongoDB, JWT, and Socket.io Collab
 const express = require('express');
 const bodyParser = require('body-parser');
 const mongoose = require('mongoose');
@@ -8,6 +7,8 @@ const jwt = require('jsonwebtoken');
 const cors = require('cors');
 const axios = require('axios');
 const path = require('path');
+const http = require('http');  // NEW: For Socket.io server
+const { Server } = require('socket.io');  // NEW: Socket.io
 require('dotenv').config({ path: path.resolve(__dirname, '../.env') }); 
 
 const app = express();
@@ -613,10 +614,41 @@ app.use((req, res) => {
     res.status(404).json({ error: 'Route not found' });
 });
 
-// Start Server
+// NEW: Socket.io Setup
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: "http://localhost:5173",  // Adjust to your frontend port (e.g., 3000 for CRA)
+    methods: ["GET", "POST"]
+  }
+});
+
+io.on('connection', (socket) => {
+  console.log('User connected:', socket.id);
+
+  socket.on('join-room', (roomId) => {
+    socket.join(roomId);
+    console.log(`User ${socket.id} joined room ${roomId}`);
+    socket.to(roomId).emit('user-joined', socket.id);  // Notify others
+  });
+
+  socket.on('code-change', ({ roomId, code }) => {
+    socket.to(roomId).emit('code-updated', { code });
+  });
+
+  socket.on('language-change', ({ roomId, language }) => {
+    socket.to(roomId).emit('language-updated', { language });
+  });
+
+  socket.on('disconnect', () => {
+    console.log('User disconnected:', socket.id);
+  });
+});
+
+// Start Server (use 'server' instead of 'app')
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
+server.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT} with Socket.io`);
 });
 
 module.exports = app;

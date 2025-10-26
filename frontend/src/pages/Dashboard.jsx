@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
+import io from 'socket.io-client';
 import { useNavigate } from "react-router-dom";
 import "../styles/dashboard.css";
 
@@ -28,6 +29,9 @@ const Dashboard = () => {
   const recognitionRef = useRef(null);
   const languageRef = useRef("python");
   const codeRef = useRef(code);
+  const socketRef = useRef(null);
+  const roomIdRef = useRef(null);
+  const isRemoteUpdateRef = useRef(false); // ADDED: Flag to prevent echo
 
   const initialCodeSnippets = {
     python:
@@ -143,6 +147,88 @@ const Dashboard = () => {
     };
   }, []);
 
+  // FIXED: Socket.io connection with proper event handling
+  useEffect(() => {
+    // Connect to Socket.io
+    socketRef.current = io('http://localhost:5000');
+
+    // Get room ID from URL params
+    const urlParams = new URLSearchParams(window.location.search);
+    const roomId = urlParams.get('room');
+    if (roomId) {
+      roomIdRef.current = roomId;
+      socketRef.current.emit('join-room', roomId);
+      console.log('Joined room:', roomId);
+      addToTerminal(`👥 Joined collaboration room: ${roomId}`, 'system');
+    }
+
+    // FIXED: Listen for code updates with echo prevention
+    socketRef.current.on('code-updated', ({ code: newCode }) => {
+      console.log('Received code update:', newCode.substring(0, 50) + '...');
+      isRemoteUpdateRef.current = true; // Mark as remote update
+      setCode(newCode);
+      addToTerminal('📝 Code updated by collaborator', 'system');
+      setTimeout(() => {
+        isRemoteUpdateRef.current = false; // Reset flag after state update
+      }, 100);
+    });
+
+    // FIXED: Listen for language updates with echo prevention
+    socketRef.current.on('language-updated', ({ language: newLanguage }) => {
+      console.log('Received language update:', newLanguage);
+      isRemoteUpdateRef.current = true; // Mark as remote update
+      setLanguage(newLanguage);
+      setCode(initialCodeSnippets[newLanguage]);
+      addToTerminal(`🔄 Language switched by collaborator: ${newLanguage}`, 'system');
+      setTimeout(() => {
+        isRemoteUpdateRef.current = false; // Reset flag
+      }, 100);
+    });
+
+    // Listen for user joined
+    socketRef.current.on('user-joined', (userId) => {
+      console.log('User joined:', userId);
+      addToTerminal('👥 New collaborator joined', 'system');
+    });
+
+    // Connection events for debugging
+    socketRef.current.on('connect', () => {
+      console.log('Socket connected:', socketRef.current.id);
+    });
+
+    socketRef.current.on('disconnect', () => {
+      console.log('Socket disconnected');
+      addToTerminal('⚠️ Disconnected from collaboration', 'system');
+    });
+
+    socketRef.current.on('connect_error', (error) => {
+      console.error('Socket connection error:', error);
+      addToTerminal('❌ Connection error. Check if backend is running.', 'error');
+    });
+
+    // Cleanup
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+      }
+    };
+  }, []); // Empty dependency array - only run once
+
+  // FIXED: Wrapper for setCode to emit changes (with echo prevention)
+  const setCodeWithEmit = (newCode) => {
+    console.log('setCodeWithEmit called, isRemote:', isRemoteUpdateRef.current);
+    setCode(newCode);
+    
+    // Only emit if this is a local change (not from socket)
+    if (roomIdRef.current && socketRef.current && !isRemoteUpdateRef.current) {
+      console.log('Emitting code change to room:', roomIdRef.current);
+      socketRef.current.emit('code-change', { 
+        roomId: roomIdRef.current, 
+        code: newCode 
+      });
+    }
+  };
+
   const debugCode = async (errorDescription, currentLanguage, currentCode) => {
     if (!currentCode || !errorDescription) {
       addToTerminal(
@@ -177,7 +263,7 @@ const Dashboard = () => {
       const data = await res.json();
 
       if (data && data.fixedCode) {
-        setCode(data.fixedCode);
+        setCodeWithEmit(data.fixedCode); // FIXED: Use setCodeWithEmit
         addToTerminal("✅ Debugging complete! Fixed code applied.", "success");
         addToTerminal("─".repeat(60), "divider");
         setCommandHistory((prev) =>
@@ -224,10 +310,12 @@ const Dashboard = () => {
 
       const data = await res.json();
       if (data && data.code) {
-        setCode((prev) =>
-          prev && !prev.endsWith("\n") ? prev + "\n\n" + data.code : data.code
-        );
-        setCommandHistory((prev) =>
+        const currentCode = codeRef.current;
+        const updatedCode = (currentCode && !currentCode.endsWith("\n") 
+          ? currentCode + "\n\n" + data.code 
+          : data.code);
+        setCodeWithEmit(updatedCode); // FIXED: Use setCodeWithEmit
+        setCommandHistory((prev) => 
           [...prev, { command: prompt, timestamp: new Date() }].slice(-5)
         );
       }
@@ -246,7 +334,7 @@ const Dashboard = () => {
       [...prev, { command, timestamp: new Date() }].slice(-5)
     );
 
-    let newCode = code;
+    let newCode = codeRef.current; // FIXED: Use codeRef.current instead of code
 
     if (lowerCommand.includes("run code") || lowerCommand.includes("execute")) {
       executeCode();
@@ -326,7 +414,7 @@ const Dashboard = () => {
       }
     }
 
-    setCode(newCode);
+    setCodeWithEmit(newCode); // FIXED: Use setCodeWithEmit
     setTimeout(() => setIsProcessing(false), 500);
   };
 
@@ -400,8 +488,8 @@ const Dashboard = () => {
           addToTerminal("─".repeat(60), "divider");
           addToTerminal(
             "✓ Execution completed successfully (exit code: " +
-              result.exitCode +
-              ")",
+            result.exitCode +
+            ")",
             "success"
           );
         } else {
@@ -490,8 +578,8 @@ const Dashboard = () => {
             addToTerminal("─".repeat(60), "divider");
             addToTerminal(
               "✓ Execution completed successfully (exit code: " +
-                result.exitCode +
-                ")",
+              result.exitCode +
+              ")",
               "success"
             );
           } else {
@@ -559,10 +647,10 @@ const Dashboard = () => {
       language === "python"
         ? "py"
         : language === "javascript"
-        ? "js"
-        : language === "java"
-        ? "java"
-        : "cpp";
+          ? "js"
+          : language === "java"
+            ? "java"
+            : "cpp";
     const blob = new Blob([code], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -577,16 +665,25 @@ const Dashboard = () => {
     setTerminalHistory([]);
   };
 
+  // FIXED: handleLanguageChange with proper emit
   const handleLanguageChange = (newLanguage) => {
+    console.log('Changing language to:', newLanguage);
     setLanguage(newLanguage);
-    setCode(initialCodeSnippets[newLanguage]);
+    setCodeWithEmit(initialCodeSnippets[newLanguage]);
     setTerminalHistory([]);
     setInputQueue([]);
+    
+    if (roomIdRef.current && socketRef.current && !isRemoteUpdateRef.current) {
+      console.log('Emitting language change to room:', roomIdRef.current);
+      socketRef.current.emit('language-change', { 
+        roomId: roomIdRef.current, 
+        language: newLanguage 
+      });
+    }
+    
     if (isRecording && recognitionRef.current) {
       recognitionRef.current.stop();
-      setTimeout(() => {
-        recognitionRef.current.start();
-      }, 100);
+      setTimeout(() => recognitionRef.current.start(), 100);
     }
   };
 
@@ -604,7 +701,7 @@ const Dashboard = () => {
         const res = await fetch("http://localhost:5000/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: userMessage, language, code }), // Include code in the request
+          body: JSON.stringify({ message: userMessage, language, code }),
         });
 
         if (!res.ok) {
@@ -688,8 +785,8 @@ const Dashboard = () => {
                 {isRecording
                   ? "Listening..."
                   : isProcessing
-                  ? "Processing..."
-                  : "Ready"}
+                    ? "Processing..."
+                    : "Ready"}
               </span>
             </div>
           </div>
@@ -814,6 +911,23 @@ const Dashboard = () => {
                 {isExecuting ? "Running..." : "Run"}
               </button>
               <button
+                onClick={() => {
+                  const newRoomId = Math.random().toString(36).substring(2, 10);
+                  const shareUrl = `${window.location.origin}/dashboard?room=${newRoomId}`;
+                  navigator.clipboard.writeText(shareUrl);
+                  roomIdRef.current = newRoomId;
+                  socketRef.current.emit('join-room', newRoomId);
+                  addToTerminal(`📎 Session shared! URL copied: ${shareUrl}`, 'system');
+                }}
+                className="share-btn"
+                title="Share Session"
+              >
+                <svg className="action-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110 0m0 2.684a3 3 0 110 0m-6.684 0a3 3 0 110 0m6.684 0a3 3 0 110 0m0-6.684a3 3 0 110 0m-6.684 0a3 3 0 110 0"></path>
+                </svg>
+                Share
+              </button>
+              <button
                 onClick={() => setIsChatOpen(!isChatOpen)}
                 className="action-btn"
                 title="Open Chat"
@@ -877,7 +991,7 @@ const Dashboard = () => {
             <textarea
               className="code-editor"
               value={code}
-              onChange={(e) => setCode(e.target.value)}
+              onChange={(e) => setCodeWithEmit(e.target.value)}
               spellCheck="false"
               placeholder="Write your code here or use voice commands..."
             />
@@ -950,7 +1064,7 @@ const Dashboard = () => {
                           <span className="terminal-prompt-arrow">› </span>
                         )}
                         {entry.type === "system" &&
-                        entry.content === "⏳ Processing..." ? (
+                          entry.content === "⏳ Processing..." ? (
                           <span className="processing-indicator">
                             <span className="spinner-small"></span>
                             {entry.content}
@@ -1034,7 +1148,6 @@ const Dashboard = () => {
                     >
                       <div className="chat-bubble">
                         {msg.text.split("\n").map((line, i) => {
-                          // Handle bullet points starting with '*'
                           if (line.trim().startsWith("*")) {
                             const content = line.replace(/^\*\s*/, "").trim();
                             const parts = content
@@ -1071,7 +1184,6 @@ const Dashboard = () => {
                               </div>
                             );
                           }
-                          // Handle standalone code blocks
                           if (line.trim().startsWith("```")) {
                             const codeLines = [];
                             let j = i + 1;
@@ -1082,14 +1194,13 @@ const Dashboard = () => {
                               codeLines.push(msg.text.split("\n")[j]);
                               j++;
                             }
-                            i = j; // Skip past the code block
+                            i = j;
                             return (
                               <pre key={i} className="code-block">
                                 <code>{codeLines.join("\n")}</code>
                               </pre>
                             );
                           }
-                          // Handle regular text with bold and inline code
                           const parts = line
                             .split(/(\*\*[^*]+\*\*|_[^_]+_|`[^`]+`)/)
                             .map((part, j) => {
