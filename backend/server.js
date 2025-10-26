@@ -361,6 +361,67 @@ app.post('/api/debug-code', async (req, res) => {
     res.status(500).json({ error: 'Debugging failed', details: err.message });
   }
 });
+
+// ==================== AI CHAT ROUTE ====================
+app.post('/api/chat', async (req, res) => {
+  const { message, language = 'python', code = '' } = req.body;
+  if (!message) {
+    return res.status(400).json({ error: 'Message required' });
+  }
+
+  const API_KEY = process.env.GEMINI_API_KEY;
+  const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+
+  if (!API_KEY) {
+    console.error('GEMINI_API_KEY missing in environment');
+    return res.status(500).json({ error: 'Server not configured: GEMINI_API_KEY missing' });
+  }
+
+  try {
+    const systemInstruction = `You are a helpful coding assistant specializing in ${language}. Use the following code as reference if relevant: \n${code}\n\nProvide concise, helpful responses to the user's question. If the question relates to code, suggest improvements or explanations based on the reference code.`;
+    const userInstruction = `User question: ${message}`;
+
+    const requestBody = {
+      contents: [
+        {
+          parts: [
+            {
+              text: `${systemInstruction}\n\n${userInstruction}`
+            }
+          ]
+        }
+      ],
+      generationConfig: {
+        temperature: 0.3,
+        maxOutputTokens: 1024,
+        candidateCount: 1
+      }
+    };
+
+    const url = `https://generativelanguage.googleapis.com/v1/models/${MODEL}:generateContent?key=${API_KEY}`;
+
+    const fetchRes = await axios.post(url, requestBody, {
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    const json = fetchRes.data;
+    let responseText = '';
+    if (json.candidates && json.candidates.length && json.candidates[0].content && json.candidates[0].content.parts) {
+      responseText = json.candidates[0].content.parts[0].text || '';
+    } else {
+      console.error('Unexpected API response:', json);
+      return res.status(502).json({ error: 'Unexpected API response', details: JSON.stringify(json) });
+    }
+
+    // Clean up the response if needed (e.g., remove markdown if not desired)
+    responseText = responseText.trim();
+
+    res.json({ response: responseText });
+  } catch (err) {
+    console.error('Chat generation error:', err);
+    res.status(500).json({ error: 'Chat response failed', details: err.message });
+  }
+});
 // ==================== AUTH ROUTES ====================
 
 // Signup Route
