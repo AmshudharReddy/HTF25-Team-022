@@ -21,6 +21,7 @@ const Dashboard = () => {
   const inputRef = useRef(null);
   const recognitionRef = useRef(null);
   const languageRef = useRef('python');
+  const codeRef = useRef(code);  // NEW: Ref to track latest code state
 
   const initialCodeSnippets = {
     python: '# Start coding with your voice!\nname = input("Enter your name: ")\nprint(f"Hello, {name}!")',
@@ -28,6 +29,11 @@ const Dashboard = () => {
     java: 'import java.util.Scanner;\npublic class Main {\n    public static void main(String[] args) {\n        System.out.println("Hello World!");\n    }\n}',
     cpp: '#include <iostream>\nusing namespace std;\n\nint main() {\n    cout << "Hello World!" << endl;\n    return 0;\n}'
   };
+
+  // NEW: Update codeRef whenever code state changes
+  useEffect(() => {
+    codeRef.current = code;
+  }, [code]);
 
   useEffect(() => {
     languageRef.current = language;
@@ -72,7 +78,28 @@ const Dashboard = () => {
         setTranscript(interimTranscript || finalTranscript);
 
         if (finalTranscript) {
+          const lowerTranscript = finalTranscript.toLowerCase().trim();
           const currentLang = languageRef.current;
+          const currentCode = codeRef.current;  // Use ref for latest code
+
+          // UPDATED: Broader keyword detection for debugging
+          if (lowerTranscript.includes('debug') || lowerTranscript.includes('fix') || lowerTranscript.includes('error')) {
+            // Extract error description: everything after the keyword
+            let errorDesc = finalTranscript;
+            if (lowerTranscript.includes('debug')) {
+              errorDesc = finalTranscript.replace(/debug/i, '').trim();
+            } else if (lowerTranscript.includes('fix')) {
+              errorDesc = finalTranscript.replace(/fix/i, '').trim();
+            } else if (lowerTranscript.includes('error')) {
+              errorDesc = finalTranscript.replace(/error/i, '').trim();
+            }
+            errorDesc = errorDesc || 'Fix any errors in the code';
+            console.log('Debug triggered with code:', currentCode, 'desc:', errorDesc);  // Log for debugging
+            debugCode(errorDesc, currentLang, currentCode);  // Pass currentCode explicitly
+            return; // Exit early, don't fall through to generation
+          }
+
+          // Existing generation/command logic
           generateCode(finalTranscript.trim(), currentLang).catch(err => {
             processVoiceCommand(finalTranscript.trim(), currentLang);
           });
@@ -95,6 +122,55 @@ const Dashboard = () => {
       }
     };
   }, []);
+
+  // UPDATED: Debugging function - pass currentCode explicitly, improved logging
+  const debugCode = async (errorDescription, currentLanguage, currentCode) => {
+    if (!currentCode || !errorDescription) {
+      addToTerminal('Error: No code or description provided for debugging.', 'error');
+      return;
+    }
+
+    try {
+      setIsProcessing(true);
+      addToTerminal('🔍 Debugging code... (Error: ' + errorDescription + ')', 'system');
+
+      console.log('Debug request payload:', { code: currentCode, errorDescription, language: currentLanguage });
+
+      const res = await fetch('http://localhost:5000/api/debug-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: currentCode, errorDescription, language: currentLanguage })
+      });
+
+      console.log('Debug response status:', res.status);
+
+      if (!res.ok) {
+        const errorText = await res.text();
+        console.error('Debug server error:', res.status, errorText);
+        throw new Error(`Server error: ${res.status} - ${errorText}`);
+      }
+
+      const data = await res.json();
+      console.log('Debug response data:', data);
+
+      if (data && data.fixedCode) {
+        setCode(data.fixedCode);
+        addToTerminal('✅ Debugging complete! Fixed code applied.', 'success');
+        addToTerminal('─'.repeat(60), 'divider');
+        setCommandHistory(prev => [...prev, { command: `Debug: ${errorDescription}`, timestamp: new Date() }].slice(-5));
+      } else {
+        throw new Error('No fixed code returned from server');
+      }
+    } catch (err) {
+      console.error('debugCode error:', err);
+      addToTerminal('❌ Debugging failed: ' + err.message, 'error');
+      addToTerminal('─'.repeat(60), 'divider');
+      // Fallback: Suggest running code to see error
+      addToTerminal('💡 Tip: Run the code to see the exact error, then describe it (e.g., "fix the NameError").', 'system');
+    } finally {
+      setTimeout(() => setIsProcessing(false), 300);
+    }
+  };
 
   const addToTerminal = (content, type = 'output') => {
     setTerminalHistory(prev => [...prev, { content, type, timestamp: Date.now() }]);
@@ -397,7 +473,6 @@ const Dashboard = () => {
       }, 100);
     }
   };
-
   return (
     <div className="dashboard-container">
       {/* Header */}

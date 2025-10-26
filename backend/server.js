@@ -168,7 +168,7 @@ app.post('/api/generate-code', async (req, res) => {
     if (!prompt) return res.status(400).json({ error: 'prompt required' });
 
     const API_KEY = process.env.GEMINI_API_KEY;
-    const MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash-exp';
+    const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 
     if (!API_KEY) {
         console.error('GEMINI_API_KEY missing in environment');
@@ -226,6 +226,78 @@ app.post('/api/generate-code', async (req, res) => {
     }
 });
 
+// ==================== AI CODE DEBUGGING ROUTE ====================
+app.post('/api/debug-code', async (req, res) => {
+  const { code, errorDescription, language = 'python' } = req.body;
+  if (!code || !errorDescription) {
+    return res.status(400).json({ error: 'Code and error description required' });
+  }
+
+  const API_KEY = process.env.GEMINI_API_KEY;
+  const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+
+  if (!API_KEY) {
+    console.error('GEMINI_API_KEY missing in environment');
+    return res.status(500).json({ error: 'Server not configured: GEMINI_API_KEY missing' });
+  }
+
+  try {
+    // Shortened system instruction to save tokens
+    const systemInstruction = `Debug ${language} code. Fix the error described. Return ONLY the corrected code. Minimal changes. No explanations.`;
+    const userInstruction = `Code:\n${code}\n\nError: ${errorDescription}`;
+
+    const requestBody = {
+      contents: [
+        {
+          parts: [
+            {
+              text: `${systemInstruction}\n\n${userInstruction}`
+            }
+          ]
+        }
+      ],
+    //   generationConfig: {
+    //     temperature: 0.1,  // Low for precise fixes
+    //     maxOutputTokens: 512,  // Reduced to avoid MAX_TOKENS
+    //     candidateCount: 1
+    //   }
+    };
+
+    const url = `https://generativelanguage.googleapis.com/v1/models/${MODEL}:generateContent?key=${API_KEY}`;
+
+    const fetchRes = await axios.post(url, requestBody, {
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    const json = fetchRes.data;
+    let fixedCode = '';
+    if (json.candidates && json.candidates.length && json.candidates[0].content && json.candidates[0].content.parts && json.candidates[0].content.parts[0].text) {
+      fixedCode = json.candidates[0].content.parts[0].text || '';
+    } else {
+      // Improved handling for empty content (e.g., token limit)
+      console.error('Unexpected/empty API response:', json);
+      return res.status(502).json({ error: 'Debug API returned empty response (possible token limit). Try a shorter error description.', details: JSON.stringify(json) });
+    }
+
+    // Extract code from Markdown if present
+    const fenceMatch = fixedCode.match(/```(?:\w*\n)?([\s\S]*?)```/);
+    if (fenceMatch && fenceMatch[1]) {
+      fixedCode = fenceMatch[1].trim();
+    } else {
+      fixedCode = fixedCode.trim();
+    }
+
+    // Fallback if still empty
+    if (!fixedCode.trim()) {
+      return res.status(500).json({ error: 'No fixed code generated. Try rephrasing the error.' });
+    }
+
+    res.json({ fixedCode });
+  } catch (err) {
+    console.error('Debug generation error:', err);
+    res.status(500).json({ error: 'Debugging failed', details: err.message });
+  }
+});
 // ==================== AUTH ROUTES ====================
 
 // Signup Route
