@@ -922,9 +922,9 @@ const Dashboard = () => {
                 className="share-btn"
                 title="Share Session"
               >
-                <svg className="action-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                {/* <svg className="action-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110 0m0 2.684a3 3 0 110 0m-6.684 0a3 3 0 110 0m6.684 0a3 3 0 110 0m0-6.684a3 3 0 110 0m-6.684 0a3 3 0 110 0"></path>
-                </svg>
+                </svg> */}
                 Share
               </button>
               <button
