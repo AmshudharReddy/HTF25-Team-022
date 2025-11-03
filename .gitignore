@@ -1,0 +1,12 @@
+# Ignore all node_modules folders
+node_modules/
+
+# Environment variables
+.env
+
+# Python cache
+**/__pycache__/
+**/*.py[cod]
+
+**/*.png
+**/*.pdf
